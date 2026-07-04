@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/pitchgraph.tsx","./src/hooks/usepitchdata.ts","./src/hooks/usepitchtrace.ts","./src/types/pitchpoint.ts"],"version":"6.0.3"}
