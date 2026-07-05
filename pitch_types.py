@@ -29,11 +29,22 @@ class PitchFrame:
         Detected fundamental frequency in Hz, or None if unvoiced.
     confidence : float
         Detector-specific confidence score in the range [0.0, 1.0].
+    voiced : bool
+        Whether the detector classified this frame as voiced.
+        Stored separately from confidence so downstream consumers can
+        distinguish detector voicing decisions from confidence strength.
+    energy : float
+        RMS energy of the audio frame (0.0–1.0 for normalised audio).
+        Represents actual signal strength regardless of whether the
+        pitch detector found a pitch.  Used by the future Pitch Tracking
+        Engine to distinguish sustained notes from silence and dropouts.
     """
 
     time_ms: int
     frequency: float | None
     confidence: float
+    voiced: bool
+    energy: float
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -55,7 +66,7 @@ class DetectionResult:
 
     @property
     def voiced_frames(self) -> List[PitchFrame]:
-        return [f for f in self.frames if f.frequency is not None]
+        return [f for f in self.frames if f.voiced]
 
     @property
     def average_confidence(self) -> float:
@@ -64,6 +75,14 @@ class DetectionResult:
             if self.frames
             else 0.0
         )
+
+    @property
+    def energy_stats(self) -> tuple[float, float, float]:
+        """Return (average, max, min) RMS energy across all frames."""
+        if not self.frames:
+            return (0.0, 0.0, 0.0)
+        energies = [f.energy for f in self.frames]
+        return (sum(energies) / len(energies), max(energies), min(energies))
 
 
 class PitchDetector(ABC):
@@ -166,6 +185,7 @@ class PitchDetector(ABC):
         """Print a standardised validation summary for any detector."""
         voiced = result.voiced_frames
         avg_conf = result.average_confidence
+        avg_energy, max_energy, min_energy = result.energy_stats
 
         print(f"---- {self.name} pitch extraction summary ----")
         print(f"Detector              : {self.name}")
@@ -176,6 +196,9 @@ class PitchDetector(ABC):
         print(f"Voiced frames         : {len(voiced)}")
         print(f"Unvoiced frames       : {len(result.frames) - len(voiced)}")
         print(f"Average confidence    : {avg_conf:.4f}")
+        print(f"Average RMS energy    : {avg_energy:.4f}")
+        print(f"Maximum RMS energy    : {max_energy:.4f}")
+        print(f"Minimum RMS energy    : {min_energy:.4f}")
         print(f"Processing time       : {result.processing_time_s:.3f} s")
         print(f"Output file           : {output_path}")
         print("-" * 52)

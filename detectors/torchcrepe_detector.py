@@ -44,6 +44,9 @@ CONFIDENCE_THRESHOLD = 0.6
 # Other options: 'tiny', 'small', 'medium', 'large'.
 MODEL_CAPACITY = "full"
 
+# Target prediction interval — one prediction every ~10 ms.
+TARGET_HOP_MS = 10
+
 
 class TorchCrepeDetector(PitchDetector):
     """Pitch detector using torchcrepe (PyTorch CREPE model)."""
@@ -102,23 +105,47 @@ class TorchCrepeDetector(PitchDetector):
         pitch_np = pitch.squeeze(0).cpu().numpy()        # (frames,)
         conf_np = periodicity.squeeze(0).cpu().numpy()    # (frames,)
 
+        # --- RMS energy extraction ---
+        # Compute RMS on the original audio using a frame length and hop
+        # length that produce the same number of frames as torchcrepe.
+        # torchcrepe uses HOP_LENGTH=160 at 16 kHz (10 ms).  We match this
+        # on the original sample rate so energy aligns with pitch frames.
+        orig_hop = max(1, int(round(sr * TARGET_HOP_MS / 1000.0)))
+        orig_frame_length = 2048 if sr <= 48000 else 4096
+        rms = librosa.feature.rms(
+            y=audio,
+            frame_length=orig_frame_length,
+            hop_length=orig_hop,
+        )[0]
+
+        # --- Frame alignment verification ---
+        n_pitch = len(pitch_np)
+        if len(rms) != n_pitch:
+            raise RuntimeError(
+                f"Frame alignment mismatch: torchcrepe produced {n_pitch} "
+                f"frames but RMS produced {len(rms)} frames."
+            )
+
         frames: List[PitchFrame] = []
-        for i in range(len(pitch_np)):
+        for i in range(n_pitch):
             # Timestamp from frame index, hop length, and sample rate.
             time_ms = int(round(i * HOP_LENGTH / CREPE_SR * 1000.0))
             conf = float(conf_np[i])
 
             # Apply confidence threshold: below it, treat as unvoiced.
-            if conf >= CONFIDENCE_THRESHOLD:
-                freq = float(pitch_np[i])
-            else:
-                freq = None
+            is_voiced = conf >= CONFIDENCE_THRESHOLD
+            freq = float(pitch_np[i]) if is_voiced else None
+
+            # Energy is always present, even for unvoiced frames.
+            energy = float(rms[i]) if i < len(rms) else 0.0
 
             frames.append(
                 PitchFrame(
                     time_ms=time_ms,
                     frequency=freq,
                     confidence=round(conf, 4),
+                    voiced=is_voiced,
+                    energy=round(energy, 4),
                 )
             )
 
